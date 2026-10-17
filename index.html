@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATLAS OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap">
+<link rel="stylesheet" href="atlas.css?v=0.1.0">
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="win top">
+    <div class="brand">
+      <img src="seal-128.png" alt="ATLAS seal">
+      <div><b>ATLAS OS</b><small>by AashiFX</small></div>
+    </div>
+    <div class="kingdom"><span class="dot"></span>Business Operations</div>
+    <nav class="units" aria-label="Business units" id="units"></nav>
+    <label class="cmd">
+      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="cmd" placeholder="Search customer, vehicle, invoice" aria-label="Search">
+      <span class="kbd">Enter</span>
+    </label>
+    <div class="top-right">
+      <span class="date" id="today"></span>
+      <button class="icon-btn" id="refresh" aria-label="Refresh data" title="Refresh data">
+        <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+      </button>
+      <button class="icon-btn" id="theme" aria-label="Switch light or dark" title="Light / Dark">
+        <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg>
+      </button>
+      <span class="avatar" aria-label="CHIEF">CH</span>
+    </div>
+  </header>
+  <div class="body">
+    <nav class="win nav" id="nav" aria-label="ATLAS menu"></nav>
+    <main class="win main" id="main" aria-live="polite"></main>
+  </div>
+</div>
+<script src="atlas.js?v=0.1.0"></script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+  <Id>de907cf7-ce58-48d5-add9-8f9c7bb790b3</Id>
+  <Version>0.1.0.0</Version>
+  <ProviderName>AashiFX</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="ATLAS OS"/>
+  <Description DefaultValue="ATLAS OS by AashiFX — executive operating shell for Business Operations (Jama Star)."/>
+  <IconUrl DefaultValue="https://atlas.aashifx.com/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://atlas.aashifx.com/icon-64.png"/>
+  <SupportUrl DefaultValue="https://atlas.aashifx.com/"/>
+  <AppDomains>
+    <AppDomain>https://atlas.aashifx.com</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Workbook"/>
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <Set Name="ExcelApi" MinVersion="1.7"/>
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://atlas.aashifx.com/taskpane.html"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Atlas.Url"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Atlas.Group">
+                <Label resid="Atlas.GroupLabel"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16"/>
+                  <bt:Image size="32" resid="Icon.32"/>
+                  <bt:Image size="80" resid="Icon.80"/>
+                </Icon>
+                <Control xsi:type="Button" id="Atlas.Open">
+                  <Label resid="Atlas.ButtonLabel"/>
+                  <Supertip>
+                    <Title resid="Atlas.ButtonLabel"/>
+                    <Description resid="Atlas.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>AtlasPane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://atlas.aashifx.com/icon-16.png"/>
+        <bt:Image id="Icon.32" DefaultValue="https://atlas.aashifx.com/icon-32.png"/>
+        <bt:Image id="Icon.80" DefaultValue="https://atlas.aashifx.com/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://atlas.aashifx.com/taskpane.html"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://atlas.aashifx.com/commands.html"/>
+        <bt:Url id="Atlas.Url" DefaultValue="https://atlas.aashifx.com/"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="ATLAS OS is ready"/>
+        <bt:String id="Atlas.GroupLabel" DefaultValue="ATLAS"/>
+        <bt:String id="Atlas.ButtonLabel" DefaultValue="ATLAS OS"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="Open ATLAS OS from the Home tab."/>
+        <bt:String id="Atlas.Tooltip" DefaultValue="Open the ATLAS OS command shell for Jama Star."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
