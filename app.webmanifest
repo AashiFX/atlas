@@ -1,0 +1,12 @@
+{
+  "name": "ATLAS OS by AashiFX",
+  "short_name": "ATLAS OS",
+  "start_url": "/#/home",
+  "display": "standalone",
+  "background_color": "#060B15",
+  "theme_color": "#060B15",
+  "icons": [
+    { "src": "seal-128.png", "sizes": "96x96", "type": "image/png" },
+    { "src": "icon-80.png", "sizes": "80x80", "type": "image/png" }
+  ]
+}

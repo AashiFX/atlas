@@ -3,42 +3,48 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#060B15">
 <title>ATLAS OS</title>
+<link rel="icon" href="icon-32.png">
+<link rel="apple-touch-icon" href="seal-128.png">
+<link rel="manifest" href="app.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap">
-<link rel="stylesheet" href="atlas.css?v=0.1.1">
-<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<link rel="stylesheet" href="app.css?v=1.0.0">
 </head>
 <body>
-<div class="app" id="app">
+<div class="app">
   <header class="win top">
-    <div class="brand">
-      <img src="seal-128.png" alt="ATLAS seal">
-      <div><b>ATLAS OS</b><small>by AashiFX</small></div>
-    </div>
-    <div class="kingdom"><span class="dot"></span>Business Operations</div>
-    <nav class="units" aria-label="Business units" id="units"></nav>
-    <label class="cmd">
-      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="cmd" placeholder="Search customer, vehicle, invoice" aria-label="Search">
-      <span class="kbd">Enter</span>
-    </label>
-    <div class="top-right">
+    <button class="brand" data-go="#/home" aria-label="ATLAS OS home">
+      <img src="seal-128.png" alt="">
+      <span><b>ATLAS OS</b><small>by AashiFX</small></span>
+    </button>
+    <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+    <button class="cmd-open" id="cmdOpen">
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span class="t">Type a command or search all kingdoms</span><span class="kbd">Ctrl K</span>
+    </button>
+    <div class="tools">
       <span class="date" id="today"></span>
-      <button class="icon-btn" id="refresh" aria-label="Refresh data" title="Refresh data">
-        <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
-      </button>
       <button class="icon-btn" id="theme" aria-label="Switch light or dark" title="Light / Dark">
         <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg>
       </button>
-      <span class="avatar" aria-label="CHIEF">CH</span>
+      <button class="avatar" id="account" aria-label="Account">CH</button>
     </div>
   </header>
   <div class="body">
-    <nav class="win nav" id="nav" aria-label="ATLAS menu"></nav>
+    <nav class="win nav" id="nav" aria-label="ATLAS navigation"></nav>
     <main class="win main" id="main" aria-live="polite"></main>
   </div>
 </div>
-<script src="atlas.js?v=0.1.1"></script>
+<div class="scrim" id="scrim" role="dialog" aria-modal="true" aria-label="Command bar">
+  <div class="palette">
+    <input id="cmdInput" placeholder="e.g. issue invoice City 7459 · open Jama VAT · status card KAEC" aria-label="Command" autocomplete="off">
+    <ul id="cmdList" role="listbox"></ul>
+    <div class="hint">↑ ↓ to move · Enter to run · Esc to close</div>
+  </div>
+</div>
+<script src="config.js?v=1.0.0"></script>
+<script src="app.js?v=1.0.0"></script>
 </body>
 </html>
