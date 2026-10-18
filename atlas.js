@@ -4,7 +4,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "0.1.0";
+  var VERSION = "0.1.1";
   var S = {
     theme: "dark", unit: "jama", view: "dash", sel: null, pinned: "home",
     data: null, error: null, loading: false, live: false, query: ""
@@ -81,7 +81,7 @@
         return ctx.sync();
       }).then(function () {
         var out = {};
-        out.kSum = kv.getRange("A7:M21"); out.kSum.load("values");
+        out.kSum = kv.getRange("A7:M60"); out.kSum.load("values");
         out.att = ucc.getRange("A12:J40"); out.att.load("values");
         out.kRec = kv.tables.items.length ? kv.tables.items[0].getDataBodyRange() : kv.getRange("A23:M217");
         out.kRec.load("values");
@@ -99,6 +99,13 @@
     });
   }
 
+  function isActive(v) {
+    var s = String(v.status || "").toLowerCase();
+    if (/closed|transfer|inactive/.test(s)) return false;
+    if (v.customer && v.next && !/no current/i.test(v.customer)) return true; // on contract with a next billing date
+    return /active/.test(s);
+  }
+
   function model(raw) {
     var rec = function (rows, unit) {
       return rows.filter(function (r) { return r[0] !== "" && r[0] != null; }).map(function (r) {
@@ -112,7 +119,9 @@
       list.forEach(function (c) { if (c.key === key && String(c.invStatus).toLowerCase() === "issued" && c.debit > 0) rate = c.debit; });
       return rate;
     }
-    var kaec = raw.kSum.filter(function (r) { return r[0] && String(r[0]).trim() !== "Vehicle"; }).map(function (r) {
+    var sumRows = [];
+    for (var i = 0; i < raw.kSum.length; i++) { var a0 = String(raw.kSum[i][0] || "").trim(); if (/^Vehicle\b/.test(a0)) break; if (a0) sumRows.push(raw.kSum[i]); }
+    var kaec = sumRows.map(function (r) {
       var key = String(r[0]).trim();
       return { unit: "KAEC", key: key, customer: r[1] || "", plate: r[2] || "", name: vehicleName(r[2], key), period: r[3] || "",
         lastInv: r[4] || "", lastDate: toDate(r[5]), billed: num(r[6]), received: num(r[7]), out: num(r[8]), next: toDate(r[9]),
@@ -130,7 +139,7 @@
       wRec.forEach(function (c) { if (c.key === a.key && c.bal > 0 && c.start && (!oldest || c.start < oldest)) oldest = c.start; });
       a.oldest = oldest;
     });
-    return { kaec: kaec, active: kaec.filter(function (v) { return v.status === "Active"; }), wwc: wwc, kRec: kRec, wRec: wRec, at: new Date() };
+    return { kaec: kaec, active: kaec.filter(isActive), wwc: wwc, kRec: kRec, wRec: wRec, at: new Date() };
   }
 
   function demo() {
@@ -281,11 +290,11 @@
   }
 
   function viewKaec() {
-    var list = S.data.kaec.slice().sort(function (a, b) { return (a.status !== "Active") - (b.status !== "Active") || (a.next || 0) - (b.next || 0); });
+    var list = S.data.kaec.slice().sort(function (a, b) { return (!isActive(a)) - (!isActive(b)) || (a.next || 0) - (b.next || 0); });
     var h = head("VEHICLES › KAEC", "KAEC fleet", list.length + " vehicle records · " + S.data.active.length + " active");
     h += '<section class="card" style="flex:none"><div class="scroll"><table><thead><tr><th>VEHICLE</th><th class="hide-n">CUSTOMER</th><th>STATUS</th><th class="num">OUTSTANDING</th><th class="num">NEXT BILLING</th></tr></thead><tbody>';
     list.forEach(function (v) {
-      h += '<tr class="click" data-vehicle="KAEC|' + esc(v.key) + '"><td class="strong">' + esc(v.name) + '</td><td class="hide-n">' + esc(v.customer || "—") + '</td><td class="' + (v.status === "Active" ? "good" : "") + '">' + esc(v.status) + '</td><td class="num ' + (v.out > 0 ? "bad" : "") + '">' + sar(v.out) + '</td><td class="num">' + fmt(v.next) + '</td></tr>';
+      h += '<tr class="click" data-vehicle="KAEC|' + esc(v.key) + '"><td class="strong">' + esc(v.name) + '</td><td class="hide-n">' + esc(v.customer || "—") + '</td><td class="' + (isActive(v) ? "good" : "") + '">' + esc(v.status) + '</td><td class="num ' + (v.out > 0 ? "bad" : "") + '">' + sar(v.out) + '</td><td class="num">' + fmt(v.next) + '</td></tr>';
     });
     return h + '</tbody></table></div></section>' + status();
   }
@@ -375,6 +384,7 @@
   });
   // hover-to-peek (wide layout): opens a menu while the pointer is over it
   document.addEventListener("mouseover", function (e) {
+    if (window.innerWidth <= 700) return; // narrow panel: click to open, no hover pop-ups
     var item = e.target.closest && e.target.closest(".nav-item");
     document.querySelectorAll(".nav-item.peek").forEach(function (x) { if (x !== item) x.classList.remove("peek", "open"); });
     if (item && !item.classList.contains("open")) item.classList.add("open", "peek");
