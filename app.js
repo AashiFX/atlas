@@ -129,7 +129,7 @@
   function msReady() {
     if (!CFG.msClientId) return Promise.resolve(null);
     if (msal) return Promise.resolve(msal);
-    return loadScript("https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js").then(function () {
+    return loadScript("https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js").then(function () {
       msal = new window.msal.PublicClientApplication({ auth: { clientId: CFG.msClientId, authority: "https://login.microsoftonline.com/" + (CFG.msTenant || "organizations"), redirectUri: location.origin + "/" }, cache: { cacheLocation: "localStorage" } });
       return msal.handleRedirectPromise().then(function (r) { if (r && r.account) msal.setActiveAccount(r.account); var a = msal.getActiveAccount() || msal.getAllAccounts()[0]; if (a) { msal.setActiveAccount(a); S.account = a; } return msal; });
     });
