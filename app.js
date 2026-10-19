@@ -4,7 +4,7 @@
    This repository contains no business data. */
 (function () {
   "use strict";
-  var VERSION = "1.3.0";
+  var VERSION = "1.3.1";
   var CFG = window.ATLAS_CONFIG || {};
 
   // ---------------------------------------------------------------- helpers
@@ -295,6 +295,12 @@
   }
   // ---------------------------------------------------------------- Hub Status cards
   function hv(h, k) { return h && h.keys && h.keys[k] ? h.keys[k].v : null; }
+  var DATE_KEY = /date|_from$|^current_month$|^as_of$/i, PLAIN_KEY = /docs|count|gaps|months|entries|version|posted|void|invoice/i;
+  function showVal(k, v) {
+    if (typeof v === "number" && DATE_KEY.test(k) && v > 20000 && v < 80000) { var d = toDate(v); return /month$/i.test(k) ? MON[d.getUTCMonth()] + " " + d.getUTCFullYear() : fmt(d); }
+    if (typeof v === "number") return PLAIN_KEY.test(k) ? String(v) : sar(v);
+    return String(v == null ? "" : v);
+  }
   function healthOf(h) {
     var st = hv(h, "health_status");
     if (st) return String(st).toUpperCase().trim();
@@ -313,10 +319,10 @@
   }
   function hubCards() {
     var cards = hubCard("masAccounts", "MAS · Main Statement", "MAS-FIN-001", function (h) {
-      return '<span class="kpi" style="padding:0;background:none"><b class="mono">' + esc(money(hv(h, "main_statement_balance"), h)) + "</b><small>" + esc((hv(h, "main_statement_open_docs") == null ? "—" : hv(h, "main_statement_open_docs")) + " open documents") + "</small></span>";
+      return '<span class="kpi" style="padding:0;background:none"><b class="mono">' + esc(money(hv(h, "main_statement_balance"), h)) + "</b><small>" + esc((hv(h, "main_statement_open_docs") == null ? "—" : showVal("main_statement_open_docs", hv(h, "main_statement_open_docs"))) + " open documents") + "</small></span>";
     }) + hubCard("monthlyFinance", "Jama · Monthly result", "JAM-FIN-004", function (h) {
       var r = String(hv(h, "month_result") || "—");
-      return '<span class="kpi" style="padding:0;background:none"><span>' + esc(hv(h, "current_month") || "") + '</span><b class="mono ' + (/^DUE/i.test(r) ? "bad" : /^EXCESS/i.test(r) ? "good" : "") + '">' + esc(r) + '</b><small class="warn">Basis: ' + esc(hv(h, "basis") || "unknown") + "</small></span>";
+      return '<span class="kpi" style="padding:0;background:none"><span>' + esc(showVal("current_month", hv(h, "current_month")) || "") + '</span><b class="mono ' + (/^DUE/i.test(r) ? "bad" : /^EXCESS/i.test(r) ? "good" : "") + '">' + esc(r) + '</b><small class="warn">Basis: ' + esc(hv(h, "basis") || "unknown") + "</small></span>";
     });
     var j = S.hubs.jamaClientAccounts;
     if (j && j.status === "live") cards += hubCard("jamaClientAccounts", "Jama Client Accounts", "JAM-FIN-001", function () { return ""; });
@@ -326,11 +332,10 @@
     var h = S.hubs[key];
     if (!h) return "";
     if (h.status !== "live") return '<div class="notice"><span><b class="bad">Not connected:</b> ' + esc(h.reason || "") + '</span><button class="btn sm" data-act="reload">Try again</button></div>';
-    var plain = /docs|count|gaps|months|entries|version|posted|void/i;
     var rows = Object.keys(h.keys).map(function (k) {
       var v = h.keys[k].v, note = h.keys[k].note;
       if (k === "payable_to_company") note = (note ? note + " · " : "") + "Basis: " + (hv(h, "basis") || "unknown");
-      var shown = typeof v === "number" ? (plain.test(k) ? String(v) : sar(v)) : String(v == null ? "" : v);
+      var shown = showVal(k, v);
       return '<tr><td class="mono">' + esc(k) + '</td><td class="num mono strong">' + esc(shown) + "</td><td>" + esc(note) + "</td></tr>";
     }).join("");
     return '<div class="kpis">' + kpi("Health", healthOf(h), String(hv(h, "health_detail") || hv(h, "health") || ""), healthOf(h) === "PASS" ? "good" : healthOf(h) === "ERRORS" ? "bad" : "warn") +
