@@ -4,7 +4,7 @@
    This repository contains no business data. */
 (function () {
   "use strict";
-  var VERSION = "1.2.0";
+  var VERSION = "1.3.0";
   var CFG = window.ATLAS_CONFIG || {};
 
   // ---------------------------------------------------------------- helpers
@@ -51,12 +51,12 @@
       { id: "office", name: "Architecture Office", about: "Blueprints and decisions", records: [R("AFX-EXE-002", "DOC", "ATLAS OS Vision Blueprint", "Kingdoms, roadmap, decisions", "TO CONNECT")] }] },
     { id: "biz", name: "Business Operations", icon: I.biz, about: "Jama Star · MAS Mobility · Prestige Rental — operations, billing, accounts.", unitLabel: "Business units", units: [
       { id: "jama", name: "Jama Star Rent a Car", about: "Monthly & daily rentals · KAEC and WWC", records: [
-        R("JAM-FIN-001", "XLS", "Jama Client Accounts", "Invoices, payments, SOA · KAEC + WWC", "LIVE", "jamaClientAccounts"),
+        R("JAM-FIN-001", "XLS", "Jama Client Accounts", "Invoices, payments, SOA · KAEC + WWC", "TO CONNECT", "jamaClientAccounts"),
         R("JAM-FIN-002", "XLS", "Jama VAT workbook", "Quarterly VAT IN / OUT", "TO CONNECT"),
         R("JAM-FIN-003", "XLS", "ADIF payment allocation", "Monthly allocation records", "TO CONNECT"),
         R("JAM-FLT-001", "XLS", "Vehicle Maintenance Record", "Fleet service history", "TO CONNECT"),
-        R("JAM-FIN-004", "XLS", "Monthly Finance Report", "Month-end summary", "TO CONNECT")] },
-      { id: "mas", name: "MAS Mobility", about: "Premium chauffeur & charter transport", records: [R("MAS-ADM-001", "XLS", "MAS records", "Point ATLAS to MAS workbooks", "TO CONNECT")] },
+        R("JAM-FIN-004", "XLS", "Monthly Finance Report", "Management accounts · monthly DUE / EXCESS", "TO CONNECT", "monthlyFinance")] },
+      { id: "mas", name: "MAS Mobility", about: "Premium chauffeur & charter transport", records: [R("MAS-FIN-001", "XLS", "MAS Accounts", "Main Statement · documents · receipts", "TO CONNECT", "masAccounts")] },
       { id: "prestige", name: "Prestige Rental Equipment", about: "Heavy equipment rental · quotations", records: [
         R("PRE-SAL-001", "XLS", "Quotation Preparation", "RFQs · PR26-Q09 standard", "TO CONNECT"),
         R("PRE-PRO-001", "DOC", "SELA project", "Project documents", "TO CONNECT")] }] },
@@ -80,7 +80,7 @@
   function findR(id) { return RECORDS.filter(function (r) { return r.id === id; })[0]; }
 
   // ---------------------------------------------------------------- state
-  var S = { theme: store("theme") || "dark", data: null, live: false, error: null, account: null, done: store("done") || {}, log: store("log") || [] };
+  var S = { mode: null, hubs: {}, errors: {}, files: {}, theme: store("theme") || "dark", data: null, live: false, error: null, account: null, done: store("done") || {}, log: store("log") || [] };
   function logAct(text) { S.log.unshift({ t: new Date().toISOString(), text: text }); S.log = S.log.slice(0, 200); store("log", S.log); }
 
   // ---------------------------------------------------------------- data model
@@ -161,36 +161,87 @@
       return r.json();
     });
   }
-  function readJamaLive() {
-    return token().then(function (tk) {
-      var name = CFG.records.jamaClientAccounts;
-      return graph("/me/drive/root/search(q='" + encodeURIComponent(name.replace(/\.xlsx$/i, "").replace(/'/g, "''")) + "')?$select=id,name,webUrl,lastModifiedDateTime", tk).then(function (res) {
-        // several copies can share the name — use the most recently saved one
-        var f = (res.value || []).filter(function (x) { return x.name === name; }).sort(function (a, b) { return String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)); })[0];
-        if (!f) throw new Error("“" + name + "” was not found in your OneDrive.");
+  function spec(key) { var s = (CFG.records || {})[key]; return typeof s === "string" ? { names: [s] } : (s || { names: [] }); }
+  function findFile(key, tk) {
+    var sp = spec(key), sel = "?$select=id,name,webUrl,lastModifiedDateTime,parentReference";
+    var byPath = sp.path ? graph("/me/drive/root:/" + sp.path.split("/").map(encodeURIComponent).join("/") + sel, tk).catch(function () { return null; }) : Promise.resolve(null);
+    return byPath.then(function (f) {
+      if (f && f.id) return f;
+      var names = sp.names || [], i = 0;
+      function next() {
+        if (i >= names.length) return null;
+        var name = names[i++];
+        return graph("/me/drive/root/search(q='" + encodeURIComponent(name.replace(/\.xlsx$/i, "").replace(/'/g, "''")) + "')" + sel, tk).then(function (res) {
+          // several copies can share a name — use the most recently saved exact match
+          var hit = (res.value || []).filter(function (x) { return x.name === name; }).sort(function (a, b) { return String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)); })[0];
+          return hit || next();
+        });
+      }
+      return next();
+    });
+  }
+  function readHub(key, tk) {
+    return findFile(key, tk).then(function (f) {
+      if (!f) throw new Error("file not found in OneDrive (" + (spec(key).names || []).join(" / ") + ")");
+      S.files[key] = f;
+      return graph("/me/drive/items/" + f.id + "/workbook/worksheets/" + encodeURIComponent(CFG.hubSheet || "Hub Status") + "/range(address='" + (CFG.hubRange || "A4:C40") + "')?$select=values", tk)
+        .catch(function () { throw new Error("sheet “" + (CFG.hubSheet || "Hub Status") + "” not found in " + f.name); })
+        .then(function (x) {
+          var keys = {};
+          (x.values || []).slice(1).forEach(function (r) { var k = String(r[0] || "").trim(); if (k) keys[k] = { v: r[1], note: String(r[2] || "") }; });
+          return { status: "live", file: f, keys: keys, readAt: new Date() };
+        });
+    });
+  }
+  function readJamaLive(tk) {
+    return findFile("jamaClientAccounts", tk).then(function (f) {
+        if (!f) throw new Error("“Jama Client Accounts.xlsx” was not found in your OneDrive.");
+        S.files.jamaClientAccounts = f;
         var wb = "/me/drive/items/" + f.id + "/workbook/";
         return graph(wb + "tables?$select=name", tk).then(function (t) {
           var names = (t.value || []).map(function (x) { return x.name; });
           var pick = function (re) { return names.filter(function (n) { return re.test(n); })[0]; };
           var body = function (n) { return n ? graph(wb + "tables/" + encodeURIComponent(n) + "/dataBodyRange?$select=values", tk).then(function (x) { return x.values; }) : Promise.resolve([]); };
+          if (!pick(/^tblAccountRegister$/)) throw new Error("table tblAccountRegister not found in " + f.name);
           return Promise.all([body(pick(/^tblAccountRegister$/)), body(pick(/KAECVehicleRecords/)), body(pick(/WWCVehicleRecords/)),
             graph(wb + "worksheets/" + encodeURIComponent("Unified Control Center") + "/range(address='A12:J40')?$select=values", tk).then(function (x) { return x.values; }).catch(function () { return []; })])
             .then(function (v) { return { ar: v[0], kRec: v[1], wRec: v[2], att: v[3], webUrl: f.webUrl, file: f }; });
         });
-      });
     });
   }
   function signIn() {
-    if (!CFG.msClientId) { toast("Microsoft sign-in is set up in the admin step (planned 11 AM). Until then ATLAS shows sample data."); return; }
+    if (!CFG.msClientId) { toast("Microsoft sign-in is not configured in this build."); return; }
     msReady().then(function (m) { m.loginRedirect({ scopes: CFG.scopes }); });
   }
 
+  function setStatus(src, st) { RECORDS.forEach(function (r) { if (r.source === src) r.status = st; }); }
+  function sampleHubs() {
+    var now = new Date();
+    return {
+      masAccounts: { status: "live", sample: true, readAt: now, file: { name: "MAS Accounts (sample)" }, keys: { main_statement_balance: { v: 12345 }, main_statement_open_docs: { v: 3 }, health_status: { v: "PASS" }, last_action: { v: "Sample action" }, currency: { v: "SAR" } } },
+      monthlyFinance: { status: "live", sample: true, readAt: now, file: { name: "Monthly Finance Report (sample)" }, keys: { current_month: { v: "2026-10" }, month_result: { v: "DUE 1,000.00" }, basis: { v: "BANK ONLY - sample" }, health_status: { v: "WARNINGS" }, last_action: { v: "Sample action" }, currency: { v: "SAR" } } }
+    };
+  }
   function load() {
-    S.error = null;
+    S.error = null; S.errors = {};
+    if (!CFG.msClientId) { // developer preview only — never used once sign-in is configured
+      S.mode = "sample"; S.live = false; S.data = model(sample()); S.hubs = sampleHubs(); setStatus("jamaClientAccounts", "LIVE"); setStatus("masAccounts", "LIVE"); setStatus("monthlyFinance", "LIVE");
+      render(); return Promise.resolve();
+    }
     return msReady().then(function () {
-      if (S.account) return readJamaLive().then(function (raw) { S.live = true; return raw; });
-      S.live = false; return sample();
-    }).then(function (raw) { S.data = model(raw); }).catch(function (e) { S.error = e.message || String(e); S.live = false; S.data = model(sample()); }).then(render);
+      if (!S.account) { S.mode = "signin"; S.live = false; S.data = null; return; }
+      return token().then(function (tk) {
+        S.mode = "live"; S.live = true;
+        var jobs = [readJamaLive(tk).then(function (raw) { S.data = model(raw); setStatus("jamaClientAccounts", "LIVE"); })
+          .catch(function (e) { S.errors.jamaClientAccounts = e.message || String(e); S.data = model({}); setStatus("jamaClientAccounts", "NOT CONNECTED"); })];
+        ["masAccounts", "monthlyFinance"].forEach(function (k) {
+          jobs.push(readHub(k, tk).then(function (h) { S.hubs[k] = h; setStatus(k, "LIVE"); })
+            .catch(function (e) { S.hubs[k] = { status: "not connected", reason: e.message || String(e) }; setStatus(k, "NOT CONNECTED"); }));
+        });
+        jobs.push(readHub("jamaClientAccounts", tk).then(function (h) { S.hubs.jamaClientAccounts = h; }).catch(function () { S.hubs.jamaClientAccounts = null; }));
+        return Promise.all(jobs);
+      });
+    }).catch(function (e) { S.mode = "error"; S.live = false; S.error = e.message || String(e); }).then(render);
   }
 
   // ---------------------------------------------------------------- derived: Morning Brief + Approval Inbox
@@ -238,11 +289,55 @@
   function head(eyebrow, title, lead, right) { return '<div class="head"><div><div class="eyebrow">' + esc(eyebrow) + "</div><h1>" + esc(title) + "</h1>" + (lead ? '<p class="lead">' + lead + "</p>" : "") + "</div>" + (right || "") + "</div>"; }
   function kpi(l, v, n, c) { return '<div class="kpi"><span>' + esc(l) + '</span><b class="mono ' + (c || "") + '">' + esc(v) + '</b><small class="' + (c === "bad" ? "" : c || "") + '">' + esc(n) + "</small></div>"; }
   function sourceNote() {
-    if (S.error) return '<div class="notice"><span><b class="bad">Couldn’t read your workbook:</b> ' + esc(S.error) + " Showing sample data.</span><button class=\"btn sm\" data-act=\"reload\">Try again</button></div>";
-    if (S.live) return "";
-    return '<div class="notice"><span>Sample data — figures become live after Microsoft sign-in.</span><button class="btn sm" data-act="signin">Connect Microsoft account</button></div>';
+    if (S.mode === "sample") return '<div class="notice"><span>Developer preview — fictional sample data.</span></div>';
+    if (S.errors.jamaClientAccounts) return '<div class="notice"><span><b class="bad">Could not read Jama Client Accounts.xlsx:</b> ' + esc(S.errors.jamaClientAccounts) + '</span><button class="btn sm" data-act="reload">Try again</button></div>';
+    return "";
   }
-  function statusTone(s) { return s === "LIVE" ? "good" : s === "TO CONNECT" ? "warn" : ""; }
+  // ---------------------------------------------------------------- Hub Status cards
+  function hv(h, k) { return h && h.keys && h.keys[k] ? h.keys[k].v : null; }
+  function healthOf(h) {
+    var st = hv(h, "health_status");
+    if (st) return String(st).toUpperCase().trim();
+    var m = String(hv(h, "health") || "").toUpperCase().match(/\b(PASS|WARNINGS|ERRORS)\b/);
+    return m ? m[1] : "UNKNOWN";
+  }
+  function healthTag(h) { var x = healthOf(h); return '<span class="tag ' + (x === "PASS" ? "good" : x === "WARNINGS" ? "warn" : x === "ERRORS" ? "bad" : "") + '">' + x + "</span>"; }
+  function money(v, h) { var c = String(hv(h, "currency") || "SAR"); return typeof v === "number" ? c + " " + sar(v) : (v == null || v === "" ? "—" : String(v)); }
+  function asOf(h) { var a = hv(h, "as_of"); var d = a ? new Date(a) : null; return (d && !isNaN(d) ? "as of " + d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) + " · " : "") + "read " + h.readAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  function hubCard(key, title, recId, body) {
+    var h = S.hubs[key];
+    if (!h) return "";
+    if (h.status !== "live") return '<button class="tile" data-go="#/record/' + recId + '"><span class="top-row"><b>' + esc(title) + '</b><span class="tag warn">NOT CONNECTED</span></span><p>' + esc(h.reason || "") + "</p></button>";
+    return '<button class="tile" data-go="#/record/' + recId + '"><span class="top-row"><b>' + esc(title) + "</b>" + healthTag(h) + "</span>" + body(h) +
+      '<p>' + esc(hv(h, "last_action") ? "Last: " + hv(h, "last_action") : "") + '</p><p class="mono">' + esc(asOf(h)) + "</p></button>";
+  }
+  function hubCards() {
+    var cards = hubCard("masAccounts", "MAS · Main Statement", "MAS-FIN-001", function (h) {
+      return '<span class="kpi" style="padding:0;background:none"><b class="mono">' + esc(money(hv(h, "main_statement_balance"), h)) + "</b><small>" + esc((hv(h, "main_statement_open_docs") == null ? "—" : hv(h, "main_statement_open_docs")) + " open documents") + "</small></span>";
+    }) + hubCard("monthlyFinance", "Jama · Monthly result", "JAM-FIN-004", function (h) {
+      var r = String(hv(h, "month_result") || "—");
+      return '<span class="kpi" style="padding:0;background:none"><span>' + esc(hv(h, "current_month") || "") + '</span><b class="mono ' + (/^DUE/i.test(r) ? "bad" : /^EXCESS/i.test(r) ? "good" : "") + '">' + esc(r) + '</b><small class="warn">Basis: ' + esc(hv(h, "basis") || "unknown") + "</small></span>";
+    });
+    var j = S.hubs.jamaClientAccounts;
+    if (j && j.status === "live") cards += hubCard("jamaClientAccounts", "Jama Client Accounts", "JAM-FIN-001", function () { return ""; });
+    return cards ? "<h2>Connected workbooks</h2>" + '<div class="grid">' + cards + "</div>" : "";
+  }
+  function hubTable(key) {
+    var h = S.hubs[key];
+    if (!h) return "";
+    if (h.status !== "live") return '<div class="notice"><span><b class="bad">Not connected:</b> ' + esc(h.reason || "") + '</span><button class="btn sm" data-act="reload">Try again</button></div>';
+    var plain = /docs|count|gaps|months|entries|version|posted|void/i;
+    var rows = Object.keys(h.keys).map(function (k) {
+      var v = h.keys[k].v, note = h.keys[k].note;
+      if (k === "payable_to_company") note = (note ? note + " · " : "") + "Basis: " + (hv(h, "basis") || "unknown");
+      var shown = typeof v === "number" ? (plain.test(k) ? String(v) : sar(v)) : String(v == null ? "" : v);
+      return '<tr><td class="mono">' + esc(k) + '</td><td class="num mono strong">' + esc(shown) + "</td><td>" + esc(note) + "</td></tr>";
+    }).join("");
+    return '<div class="kpis">' + kpi("Health", healthOf(h), String(hv(h, "health_detail") || hv(h, "health") || ""), healthOf(h) === "PASS" ? "good" : healthOf(h) === "ERRORS" ? "bad" : "warn") +
+      kpi("Last action", String(hv(h, "last_action") || "—"), asOf(h)) + kpi("File", h.file.name, h.sample ? "sample" : "OneDrive") + "</div>" +
+      '<section class="card full"><div class="card-h"><h2>Hub Status</h2><small>' + Object.keys(h.keys).length + ' keys</small></div><div class="scroll"><table><thead><tr><th>KEY</th><th class="num">VALUE</th><th>NOTE</th></tr></thead><tbody>' + rows + "</tbody></table></div></section>";
+  }
+  function statusTone(s) { return s === "LIVE" ? "good" : s === "TO CONNECT" || s === "NOT CONNECTED" ? "warn" : ""; }
 
   function vHome() {
     var d = S.data, hr = new Date().getHours(), act = d.active;
@@ -251,7 +346,7 @@
     var kOut = d.kaec.reduce(function (s, v) { return s + v.out; }, 0), wOut = d.wwc.reduce(function (s, v) { return s + v.out; }, 0);
     var h = head("CHIEF Home", hi + ", CHIEF", "Ten kingdoms under one command.", '<div class="row"><button class="btn" data-go="#/brief">Morning Brief</button><button class="btn primary" data-go="#/inbox">Approval Inbox · ' + openCount() + "</button></div>") + sourceNote();
     h += '<div class="kpis">' + kpi("Jama · bills due in 7 days", due, "KAEC contracts", due ? "warn" : "good") + kpi("Jama · KAEC outstanding", "SAR " + sar(kOut), act.length + " vehicles on contract", kOut > 0 ? "bad" : "good") +
-      kpi("Jama · WWC outstanding", "SAR " + sar(wOut), d.wwc.length + " accounts", wOut > 0 ? "bad" : "good") + kpi("Records connected", RECORDS.filter(function (r) { return r.status === "LIVE"; }).length + " of " + RECORDS.length, "Record Registry") + "</div>";
+      kpi("Jama · WWC outstanding", "SAR " + sar(wOut), d.wwc.length + " accounts", wOut > 0 ? "bad" : "good") + kpi("Records connected", RECORDS.filter(function (r) { return r.status === "LIVE"; }).length + " of " + RECORDS.length, "Record Registry") + "</div>" + hubCards();
     h += '<div class="split"><section class="card"><div class="card-h"><h2>Today</h2><button class="btn sm" data-go="#/brief">Full brief</button></div>' + briefList(briefItems().slice(0, 4)) + "</section>";
     h += '<aside class="side"><h2>Recent activity</h2>' + (S.log.length ? S.log.slice(0, 4).map(function (l) { return '<div class="tip"><b>' + esc(l.text) + "</b><span>" + esc(new Date(l.t).toLocaleString()) + "</span></div>"; }).join("") : '<div class="tip"><span>Approvals and actions you take appear here.</span></div>') + "</aside></div>";
     h += "<h2>Kingdoms</h2>" + '<div class="grid">' + KINGDOMS.map(function (k) {
@@ -277,7 +372,7 @@
     return head("Approval Inbox", open.length ? open.length + " waiting for CHIEF" : "All clear", "ATLAS prepares the work · you decide.") + sourceNote() +
       '<section class="card full">' + (open.length ? open.map(function (x) { return row(x, false); }).join("") : '<div class="empty">Nothing waiting. 🎯</div>') + "</section>" +
       (done.length ? "<h2>Approved</h2>" + '<section class="card full">' + done.map(function (x) { return row(x, true); }).join("") + "</section>" : "") +
-      '<p class="foot">Approve opens the record in Excel at the right sheet and logs your decision. One-click automatic run (Office Script via Power Automate) arrives in phase 2.</p>';
+      '<p class="foot">Approve opens the workbook in Excel and logs your decision on this device. One-click automatic run (Office Script via Power Automate) arrives in phase 2.</p>';
   }
   function vRegistry() {
     var h = head("Record Registry", RECORDS.length + " records", "Every workbook and document, filed by kingdom with an Evidence ID. IDs are proposed — confirm or change.");
@@ -287,7 +382,7 @@
   }
   function vKingdom(k) {
     if (!k) return '<div class="empty">Kingdom not found.</div>';
-    return head("Kingdom", k.name, esc(k.about)) + "<h2>" + esc(k.unitLabel || "Units") + "</h2>" + '<div class="grid">' + k.units.map(function (u) {
+    return head("Kingdom", k.name, esc(k.about)) + (k.id === "biz" ? hubCards() : "") + "<h2>" + esc(k.unitLabel || "Units") + "</h2>" + '<div class="grid">' + k.units.map(function (u) {
       var live = u.records.filter(function (r) { return r.status === "LIVE"; }).length;
       return '<button class="tile" data-go="#/u/' + k.id + "/" + u.id + '"><span class="tag ' + (live ? "good" : "warn") + '">' + (live ? "LIVE" : "TO CONNECT") + "</span><b>" + esc(u.name) + "</b><p>" + esc(u.about) + '</p><p class="good">' + u.records.length + (u.records.length === 1 ? " record" : " records") + " · " + live + " live</p></button>";
     }).join("") + "</div>";
@@ -353,12 +448,15 @@
     if (!r) return '<div class="empty">Record not found.</div>';
     var h = head(r.k.name + " › " + r.u.name, r.name, '<span class="mono">' + r.id + "</span> · " + esc(r.about), r.source ? '<button class="btn primary" data-excel="' + r.id + '">Open in Excel</button>' : "");
     if (r.source === "jamaClientAccounts") {
+      if (S.hubs.jamaClientAccounts) h += hubTable("jamaClientAccounts");
       var d = S.data, act = d.active.slice().sort(function (a, b) { return a.next - b.next; });
       h += sourceNote() + jamaKpis() + '<section class="card full"><div class="card-h"><h2>KAEC · next billing</h2></div><div class="scroll"><table><thead><tr><th>VEHICLE</th><th>CUSTOMER</th><th class="num">SAR / MONTH</th><th class="num">NEXT BILLING</th></tr></thead><tbody>';
       act.forEach(function (v) { var n = daysTo(v.next); h += '<tr><td class="strong">' + esc(v.name) + "</td><td>" + esc(v.customer) + '</td><td class="num mono">' + sar(v.rate, 0) + '</td><td class="num strong ' + (n != null && n <= 7 ? "warn" : "") + '">' + fmtS(v.next) + "</td></tr>"; });
       h += '</tbody></table></div></section><section class="card full"><div class="card-h"><h2>WWC · outstanding</h2></div><div class="scroll"><table><thead><tr><th>CUSTOMER</th><th>OLDEST UNPAID</th><th class="num">SAR</th></tr></thead><tbody>';
       d.wwc.slice().sort(function (a, b) { return (a.oldest || 9e15) - (b.oldest || 9e15); }).forEach(function (a) { h += '<tr><td class="strong">' + esc(a.customer) + "</td><td>" + fmt(a.oldest) + '</td><td class="num bad mono">' + sar(a.out) + "</td></tr>"; });
       h += "</tbody></table></div></section>";
+    } else if (r.source && r.source !== "jamaClientAccounts") {
+      h += hubTable(r.source);
     } else if (r.status === "LIVE") {
       h += '<div class="tip"><b>' + esc(r.name) + "</b><span>" + esc(r.about) + "</span></div>";
     } else {
@@ -372,7 +470,18 @@
     var t = new Date(); $("today").textContent = DAY[t.getDay()] + ", " + t.getDate() + " " + MON[t.getMonth()] + " " + t.getFullYear();
     $("account").textContent = S.account ? (S.account.name || "CH").split(/\s+/).map(function (x) { return x[0]; }).join("").slice(0, 2).toUpperCase() : "CH";
     var r = route(); renderNav(r);
-    if (!S.data) { $("main").innerHTML = '<div class="empty">Loading ATLAS…</div>'; return; }
+    if (S.mode === "signin" || (!S.data && S.mode !== "error")) {
+      crumbs([["CHIEF", "#/home"]]);
+      $("main").innerHTML = '<div class="empty" style="display:flex;flex-direction:column;align-items:center;gap:14px"><img src="seal-128.png" alt="" style="width:96px;height:96px"><h1>ATLAS OS</h1>' +
+        (S.mode === "signin" ? '<p class="lead">Sign in to open your kingdoms. Only your AashiFX Microsoft account can sign in.</p>' : '<p class="lead">Starting ATLAS…</p>') +
+        (CFG.msClientId ? '<button class="btn primary" data-act="signin">Sign in with Microsoft</button>' : "") + "</div>";
+      return;
+    }
+    if (S.mode === "error") {
+      crumbs([["CHIEF", "#/home"]]);
+      $("main").innerHTML = '<div class="notice"><span><b class="bad">ATLAS could not start:</b> ' + esc(S.error) + '</span><button class="btn sm" data-act="reload">Try again</button><button class="btn sm primary" data-act="signin">Sign in with Microsoft</button></div>';
+      return;
+    }
     var k = r.a ? findK(r.a) : null, html, c = [["CHIEF", "#/home"]];
     if (r.v === "brief") { html = vBrief(); c.push(["Morning Brief", "#/brief"]); }
     else if (r.v === "inbox") { html = vInbox(); c.push(["Approval Inbox", "#/inbox"]); }
@@ -383,7 +492,7 @@
     else if (r.v === "record") { var rec = findR(r.a); html = vRecord(rec); if (rec) { c.push([rec.k.name, "#/k/" + rec.k.id], [rec.u.name, "#/u/" + rec.k.id + "/" + rec.u.id], [rec.name, "#/record/" + rec.id]); } }
     else html = vHome();
     crumbs(c);
-    $("main").innerHTML = html + '<p class="foot">ATLAS OS v' + VERSION + " · " + (S.live ? "live from your OneDrive · read " + S.data.at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "sample data") + "</p>";
+    $("main").innerHTML = html + '<p class="foot">ATLAS OS v' + VERSION + " · " + (S.mode === "live" ? "live from your OneDrive · read " + S.data.at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "developer preview · sample data") + "</p>";
   }
 
   // ---------------------------------------------------------------- actions
@@ -391,7 +500,8 @@
   function toast(m) { var el = $("toast"); if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; el.setAttribute("role", "status"); document.body.appendChild(el); } el.textContent = m; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { el.hidden = true; }, 4200); }
   function openExcel(recId, note) {
     var r = findR(recId);
-    if (S.live && S.data.webUrl && r && r.source === "jamaClientAccounts") { window.open(S.data.webUrl, "_blank", "noopener"); }
+    var f = r && r.source ? S.files[r.source] : null;
+    if (S.mode === "live" && f && f.webUrl) { window.open(f.webUrl, "_blank", "noopener"); }
     else toast((note ? note + " — " : "") + "Excel opens here once your Microsoft account is connected.");
   }
   function approve(id) {
