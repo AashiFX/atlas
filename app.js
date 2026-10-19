@@ -4,7 +4,7 @@
    This repository contains no business data. */
 (function () {
   "use strict";
-  var VERSION = "1.1.0";
+  var VERSION = "1.2.0";
   var CFG = window.ATLAS_CONFIG || {};
 
   // ---------------------------------------------------------------- helpers
@@ -83,44 +83,60 @@
   var S = { theme: store("theme") || "dark", data: null, live: false, error: null, account: null, done: store("done") || {}, log: store("log") || [] };
   function logAct(text) { S.log.unshift({ t: new Date().toISOString(), text: text }); S.log = S.log.slice(0, 200); store("log", S.log); }
 
-  // ---------------------------------------------------------------- data model (same rules as the Excel add-in)
-  function isActive(v) {
-    var s = String(v.status || "").toLowerCase();
-    if (/closed|transfer|inactive/.test(s)) return false;
-    if (v.customer && v.next && !/no current/i.test(v.customer)) return true;
-    return /active/.test(s);
-  }
+  // ---------------------------------------------------------------- data model
+  // Source of truth = workbook TABLES (not the dashboard views, which change with the selected vehicle):
+  //   tblAccountRegister → one row per client account (unit, source record, customer, vehicle, plate, start, end, rate, status)
+  //   KAEC / WWC vehicle-record tables → billing cycles per source record
+  //   Unified Control Center rows → WWC daily-service balances
+  function isActive(v) { return /^active$/i.test(String(v.status || "").trim()); }
   function model(raw) {
     function recs(rows, unit) {
       return (rows || []).filter(function (r) { return r[0] !== "" && r[0] != null; }).map(function (r) {
-        return { unit: unit, key: String(r[0]).trim(), no: r[1], start: toDate(r[2]), end: toDate(r[3]), inv: r[4] || "", invStatus: r[5] || "", debit: num(r[6]), credit: num(r[7]), bal: num(r[8]), payStatus: r[11] || "" };
+        return { unit: unit, key: String(r[0]).trim(), no: r[1], start: toDate(r[2]), end: toDate(r[3]), period: typeof r[3] === "string" ? r[3] : "", inv: r[4] || "", invStatus: String(r[5] || ""), debit: num(r[6]), credit: num(r[7]), bal: num(r[8]), payStatus: String(r[11] || "") };
       });
     }
     var kRec = recs(raw.kRec, "KAEC"), wRec = recs(raw.wRec, "WWC");
-    function rate(key) { var x = 0; kRec.forEach(function (c) { if (c.key === key && /issued/i.test(c.invStatus) && c.debit > 0) x = c.debit; }); return x; }
-    var rows = [];
-    for (var i = 0; i < raw.kSum.length; i++) { var a0 = String(raw.kSum[i][0] || "").trim(); if (/^Vehicle\b/.test(a0)) break; if (a0) rows.push(raw.kSum[i]); }
-    var kaec = rows.map(function (r) {
-      var key = String(r[0]).trim();
-      return { unit: "KAEC", key: key, customer: r[1] || "", plate: r[2] || "", name: vName(r[2], key), out: num(r[8]), next: toDate(r[9]), status: String(r[10] || ""), rate: rate(key) };
+    var issued = function (c) { return /issued/i.test(c.invStatus) && !/not/i.test(c.invStatus); };
+    var accounts = [];
+    (raw.ar || []).forEach(function (r) {
+      var unit = String(r[0] || "").trim(), key = String(r[1] || "").trim(), cust = String(r[8] || "").trim();
+      if (!unit || !key || !cust || /no current/i.test(cust)) return;
+      var start = toDate(r[11]), end = toDate(r[12]), status = String(r[15] || "").trim();
+      var src = unit === "WWC" ? wRec : kRec;
+      var cyc = src.filter(function (c) { return c.key === key && (!start || !c.start || c.start.getTime() >= start.getTime() - 864e5) && (!end || !c.start || c.start.getTime() < end.getTime()); });
+      var iss = cyc.filter(issued), open = cyc.filter(function (c) { return !issued(c); });
+      var out = iss.reduce(function (s, c) { return s + c.bal; }, 0), oldest = null;
+      iss.forEach(function (c) { if (c.bal > 0 && c.start && (!oldest || c.start < oldest)) oldest = c.start; });
+      var veh = String(r[9] || "").trim(), plate = String(r[10] || "").trim();
+      accounts.push({ id: key + "@" + (start ? start.getTime() / 864e5 : 0), unit: unit, key: key, customer: cust, name: vName(veh && plate ? veh + " | " + plate : veh || plate, key),
+        start: start, end: end, rate: num(r[13]), status: status || "—", cycles: cyc, out: out, oldest: oldest,
+        next: isActive({ status: status }) && open.length ? open[0].start : null, billed: iss.reduce(function (s, c) { return s + c.debit; }, 0), received: iss.reduce(function (s, c) { return s + c.credit; }, 0), issuedCount: iss.length });
     });
-    var wwc = raw.att.filter(function (r) { return r[0] === "WWC"; }).map(function (r) {
-      var key = String(r[1]).trim(), oldest = null;
-      wRec.forEach(function (c) { if (c.key === key && c.bal > 0 && c.start && (!oldest || c.start < oldest)) oldest = c.start; });
-      return { unit: "WWC", key: key, customer: r[2] || "", plate: r[3] || "", name: vName(r[3], key), rate: num(r[4]), next: toDate(r[6]), out: num(r[8]), oldest: oldest, daily: /^Daily /.test(key) };
+    (raw.att || []).forEach(function (r) {
+      var key = String(r[1] || "").trim();
+      if (r[0] !== "WWC" || !/^Daily /.test(key)) return;
+      accounts.push({ id: key, unit: "WWC", key: key, daily: true, customer: String(r[2] || ""), name: vName(r[3], key), rate: 0, status: num(r[8]) > 0 ? "Active" : "Paid",
+        cycles: [], out: num(r[8]), oldest: null, next: null, billed: 0, received: 0, issuedCount: 1 });
     });
-    return { kaec: kaec, active: kaec.filter(isActive), wwc: wwc, kRec: kRec, wRec: wRec, at: new Date(), webUrl: raw.webUrl || null };
+    var kaec = accounts.filter(function (a) { return a.unit === "KAEC"; }), wwc = accounts.filter(function (a) { return a.unit === "WWC" && (isActive(a) || a.out > 0); });
+    return { accounts: accounts, kaec: kaec, active: kaec.filter(isActive), wwc: wwc, at: new Date(), webUrl: raw.webUrl || null };
   }
   function sample() {
     // Fictional sample data — real figures come only from your own workbook after sign-in.
-    var t = todayUTC() / 864e5 + 25569;
-    var v = [["Sample A 1001", "Sample Customer A", "Sample Sedan | 1001 AAA", 2400, 2], ["Sample B 1002", "Sample Customer B", "Sample SUV | 1002 BBB", 2400, 4],
-      ["Sample C 1003", "Sample Customer C", "Sample Sedan | 1003 CCC", 2100, 4], ["Sample D 1004", "Sample Customer D", "Sample Crossover | 1004 DDD", 2500, 12], ["Sample E 1005", "Sample Customer E", "Sample Hatchback | 1005 EEE", 2200, 27]];
-    var kSum = v.map(function (r) { return [r[0], r[1], r[2], "", "", "", r[3], r[3], 0, t + r[4], "Active", "", ""]; });
-    var kRec = v.map(function (r) { return [r[0], 1, t + r[4] - 30, t + r[4], "SAMPLE", "Issued", r[3], r[3], 0, "", "", "PAID"]; });
-    var att = [["WWC", "Sample W 2001", "Sample Account W", "Sample Sedan | 2001 WWW", 2645, "", t + 9, 9, 7935, ""], ["WWC", "Sample X 2002", "Sample Account X", "Sample SUV | 2002 XXX", 2645, "", t + 20, 20, 2645, ""]];
-    var wRec = [["Sample W 2001", 1, t - 70, t - 40, "S1", "Issued", 2645, 0, 2645], ["Sample X 2002", 1, t - 10, t + 20, "S2", "Issued", 2645, 0, 2645]];
-    return { kSum: kSum, kRec: kRec, att: att, wRec: wRec };
+    var t = todayUTC() / 864e5 + 25569, ar = [], kRec = [], wRec = [];
+    [["Sample A 1001", "Sample Customer A", "Sample Sedan", "1001 AAA", 2400, 2], ["Sample B 1002", "Sample Customer B", "Sample SUV", "1002 BBB", 2400, 4],
+      ["Sample C 1003", "Sample Customer C", "Sample Sedan", "1003 CCC", 2100, 4], ["Sample D 1004", "Sample Customer D", "Sample Crossover", "1004 DDD", 2500, 12],
+      ["Sample E 1005", "Sample Customer E", "Sample Hatchback", "1005 EEE", 2200, 27]].forEach(function (v) {
+      ar.push(["KAEC", v[0], "", "", "", "", "", "", v[1], v[2], v[3], t + v[5] - 90, "", v[4], "", "Active"]);
+      kRec.push([v[0], 1, t + v[5] - 90, t + v[5] - 60, "SAMPLE-1", "Issued", v[4], v[4], 0, "", "", "Paid"], [v[0], 2, t + v[5] - 60, t + v[5] - 30, "SAMPLE-2", "Issued", v[4], v[4], 0, "", "", "Paid"],
+        [v[0], 3, t + v[5] - 30, t + v[5], "SAMPLE-3", "Issued", v[4], v[4], 0, "", "", "Paid"], [v[0], 4, t + v[5], t + v[5] + 30, "", "Not Issued", "", "", "", "", "", ""]);
+    });
+    ar.push(["WWC", "Sample W 2001", "", "", "", "", "", "", "Sample Account W", "Sample Sedan", "2001 WWW", t - 70, "", 2645, "", "Active"], ["WWC", "Sample X 2002", "", "", "", "", "", "", "Sample Account X", "Sample SUV", "2002 XXX", t - 10, "", 2645, "", "Active"]);
+    wRec.push(["Sample W 2001", 1, t - 70, t - 40, "SAMPLE-W1", "Issued", 2645, 2645, 0, "", "", "Paid"], ["Sample W 2001", 2, t - 40, t - 10, "SAMPLE-W2", "Issued", 2645, 0, 2645, "", "", "Unpaid - Overdue"],
+      ["Sample W 2001", 3, t - 10, t + 20, "SAMPLE-W3", "Issued", 2645, 0, 2645, "", "", "Unpaid"], ["Sample W 2001", 4, t + 20, t + 50, "", "Not Issued", "", "", "", "", "", ""],
+      ["Sample X 2002", 1, t - 10, t + 20, "SAMPLE-X1", "Issued", 2645, 0, 2645, "", "", "Unpaid"], ["Sample X 2002", 2, t + 20, t + 50, "", "Not Issued", "", "", "", "", "", ""]);
+    var att = [["WWC", "Daily Sample 3001", "Sample Daily Client", "Sample Sedan | 3001 DDD", 0, "", "", "", 350, ""]];
+    return { ar: ar, kRec: kRec, wRec: wRec, att: att };
   }
 
   // ---------------------------------------------------------------- Microsoft sign-in + Graph (active once msClientId is set)
@@ -148,19 +164,19 @@
   function readJamaLive() {
     return token().then(function (tk) {
       var name = CFG.records.jamaClientAccounts;
-      return graph("/me/drive/root/search(q='" + encodeURIComponent(name.replace(/'/g, "''")) + "')?$select=id,name,webUrl", tk).then(function (res) {
-        var f = (res.value || []).filter(function (x) { return x.name === name; })[0];
+      return graph("/me/drive/root/search(q='" + encodeURIComponent(name.replace(/\.xlsx$/i, "").replace(/'/g, "''")) + "')?$select=id,name,webUrl,lastModifiedDateTime", tk).then(function (res) {
+        // several copies can share the name — use the most recently saved one
+        var f = (res.value || []).filter(function (x) { return x.name === name; }).sort(function (a, b) { return String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)); })[0];
         if (!f) throw new Error("“" + name + "” was not found in your OneDrive.");
-        var base = "/me/drive/items/" + f.id + "/workbook/worksheets/";
-        var rng = function (sheet, addr) { return graph(base + encodeURIComponent(sheet) + "/range(address='" + addr + "')?$select=values", tk).then(function (x) { return x.values; }); };
-        var tbl = function (sheet, fallback) {
-          return graph(base + encodeURIComponent(sheet) + "/tables?$select=name", tk).then(function (t) {
-            var n = t.value && t.value[0] && t.value[0].name;
-            return n ? graph("/me/drive/items/" + f.id + "/workbook/tables/" + encodeURIComponent(n) + "/dataBodyRange?$select=values", tk).then(function (x) { return x.values; }) : rng(sheet, fallback);
-          });
-        };
-        return Promise.all([rng("KAEC Vehicles", "A7:M60"), rng("Unified Control Center", "A12:J40"), tbl("KAEC Vehicles", "A23:M217"), tbl("WWC Vehicles", "A31:M168")])
-          .then(function (v) { return { kSum: v[0], att: v[1], kRec: v[2], wRec: v[3], webUrl: f.webUrl }; });
+        var wb = "/me/drive/items/" + f.id + "/workbook/";
+        return graph(wb + "tables?$select=name", tk).then(function (t) {
+          var names = (t.value || []).map(function (x) { return x.name; });
+          var pick = function (re) { return names.filter(function (n) { return re.test(n); })[0]; };
+          var body = function (n) { return n ? graph(wb + "tables/" + encodeURIComponent(n) + "/dataBodyRange?$select=values", tk).then(function (x) { return x.values; }) : Promise.resolve([]); };
+          return Promise.all([body(pick(/^tblAccountRegister$/)), body(pick(/KAECVehicleRecords/)), body(pick(/WWCVehicleRecords/)),
+            graph(wb + "worksheets/" + encodeURIComponent("Unified Control Center") + "/range(address='A12:J40')?$select=values", tk).then(function (x) { return x.values; }).catch(function () { return []; })])
+            .then(function (v) { return { ar: v[0], kRec: v[1], wRec: v[2], att: v[3], webUrl: f.webUrl, file: f }; });
+        });
       });
     });
   }
@@ -290,41 +306,43 @@
 
   // ---------------------------------------------------------------- Jama client accounts
   function allClients() {
-    var d = S.data, list = [];
-    d.kaec.forEach(function (v) { if (v.customer && !/no current/i.test(v.customer)) list.push({ unit: "KAEC", key: v.key, customer: v.customer, name: v.name, out: v.out, next: v.next, status: isActive(v) ? "Active" : (v.status || "—"), active: isActive(v), rate: v.rate }); });
-    d.wwc.forEach(function (a) { list.push({ unit: "WWC", key: a.key, customer: a.customer, name: a.name, out: a.out, next: a.next, status: a.out > 0 ? "Outstanding" : "Active", active: true, rate: a.rate, daily: a.daily, oldest: a.oldest }); });
-    return list;
+    return S.data.accounts.map(function (a) { a.active = isActive(a); return a; });
+  }
+  function inTab(c, tab) {
+    var live = c.active || c.out > 0;
+    return tab === "kaec" ? c.unit === "KAEC" && live : tab === "wwc" ? c.unit === "WWC" && live : tab === "due" ? c.out > 0 : tab === "past" ? !live : live;
   }
   function clientAccounts(tab) {
-    var list = allClients(), tabs = [["all", "All clients"], ["kaec", "KAEC"], ["wwc", "WWC"], ["due", "Outstanding"]];
-    var f = list.filter(function (c) { return tab === "kaec" ? c.unit === "KAEC" : tab === "wwc" ? c.unit === "WWC" : tab === "due" ? c.out > 0 : true; })
+    var list = allClients(), tabs = [["all", "Active"], ["kaec", "KAEC"], ["wwc", "WWC"], ["due", "Outstanding"], ["past", "Past"]];
+    var f = list.filter(function (c) { return inTab(c, tab); })
       .sort(function (a, b) { return (b.active - a.active) || (b.out - a.out) || ((a.next || 9e15) - (b.next || 9e15)); });
     var h = '<section class="card full"><div class="card-h"><h2>Client accounts</h2><div class="row" role="tablist">' + tabs.map(function (t) {
-      var n = list.filter(function (c) { return t[0] === "kaec" ? c.unit === "KAEC" : t[0] === "wwc" ? c.unit === "WWC" : t[0] === "due" ? c.out > 0 : true; }).length;
+      var n = list.filter(function (c) { return inTab(c, t[0]); }).length;
       return '<button role="tab" aria-selected="' + (t[0] === tab) + '" class="btn sm' + (t[0] === tab ? " primary" : "") + '" data-go="#/u/biz/jama/' + t[0] + '">' + t[1] + " · " + n + "</button>";
     }).join("") + '</div></div><div class="scroll"><table><thead><tr><th>CLIENT</th><th>VEHICLE</th><th>UNIT</th><th class="num">OUTSTANDING</th><th class="num">NEXT BILLING</th><th>STATUS</th></tr></thead><tbody>';
     f.forEach(function (c) {
-      h += '<tr class="click" data-go="#/client/' + c.unit + "/" + encodeURIComponent(c.key) + '"><td class="strong">' + esc(c.customer) + "</td><td>" + esc(c.name) + "</td><td>" + c.unit + (c.daily ? " · Daily" : "") + '</td><td class="num mono ' + (c.out > 0 ? "bad" : "good") + '">' + sar(c.out) + '</td><td class="num">' + fmt(c.next) + '</td><td class="' + (c.out > 0 ? "bad" : c.active ? "good" : "") + '">' + esc(c.status) + "</td></tr>";
+      h += '<tr class="click" data-go="#/client/' + c.unit + "/" + encodeURIComponent(c.id) + '"><td class="strong">' + esc(c.customer) + "</td><td>" + esc(c.name) + "</td><td>" + c.unit + (c.daily ? " · Daily" : "") + '</td><td class="num mono ' + (c.out > 0 ? "bad" : "good") + '">' + sar(c.out) + '</td><td class="num">' + fmt(c.next) + '</td><td class="' + (c.out > 0 ? "bad" : c.active ? "good" : "") + '">' + esc(c.status) + "</td></tr>";
     });
     if (!f.length) h += '<tr><td colspan="6">No clients in this view.</td></tr>';
     return h + "</tbody></table></div></section>";
   }
-  function vClient(unit, key) {
-    var c = allClients().filter(function (x) { return x.unit === unit && x.key === key; })[0];
+  function findClient(unit, id) { return allClients().filter(function (x) { return x.unit === unit && (x.id === id || x.key === id); })[0]; }
+  function vClient(unit, id) {
+    var c = findClient(unit, id);
     if (!c) return '<div class="empty">Client account not found. <button class="btn sm" data-go="#/u/biz/jama">Back to Jama Star</button></div>';
-    var cyc = (unit === "KAEC" ? S.data.kRec : S.data.wRec).filter(function (x) { return x.key === key; });
-    var issued = cyc.filter(function (x) { return /issued/i.test(x.invStatus) && !/not/i.test(x.invStatus); });
-    var billed = issued.reduce(function (s, x) { return s + x.debit; }, 0), recv = issued.reduce(function (s, x) { return s + x.credit; }, 0);
-    var upcoming = cyc.filter(function (x) { return !/issued/i.test(x.invStatus) || /not/i.test(x.invStatus); }).slice(0, 2);
-    var h = head("Jama Star › " + unit + " client", c.customer, esc(c.name) + " · " + unit + (c.daily ? " daily" : ""), '<div class="row"><button class="btn" data-excel="JAM-FIN-001">Statement (SOA)</button><button class="btn primary" data-excel="JAM-FIN-001">Open in Excel</button></div>') + sourceNote();
-    h += '<div class="kpis">' + kpi("Monthly rate", c.rate ? "SAR " + sar(c.rate) : "—", unit) + kpi("Total billed", "SAR " + sar(billed), issued.length + " invoices") + kpi("Total received", "SAR " + sar(recv), "") +
-      kpi("Outstanding", "SAR " + sar(c.out), c.out > 0 ? (c.oldest ? "Oldest unpaid " + fmt(c.oldest) : "Follow up") : "Fully collected", c.out > 0 ? "bad" : "good") + kpi("Next billing", fmt(c.next), c.next ? daysTo(c.next) + " days" : "", "warn") + "</div>";
-    h += '<section class="card full"><div class="card-h"><h2>Account history</h2><small>' + issued.length + " issued · next " + upcoming.length + '</small></div><div class="scroll"><table><thead><tr><th>#</th><th>PERIOD</th><th>INVOICE</th><th class="num">DEBIT</th><th class="num">CREDIT</th><th class="num">BALANCE</th><th>STATUS</th></tr></thead><tbody>';
+    var cyc = c.cycles, issued = cyc.filter(function (x) { return /issued/i.test(x.invStatus) && !/not/i.test(x.invStatus); });
+    var upcoming = c.active ? cyc.filter(function (x) { return !/issued/i.test(x.invStatus) || /not/i.test(x.invStatus); }).slice(0, 2) : [];
+    var span = (c.start ? fmt(c.start) : "") + (c.end ? " → " + fmt(c.end) : c.start ? " → present" : "");
+    var h = head("Jama Star › " + unit + " client", c.customer, esc(c.name) + " · " + unit + (c.daily ? " daily" : "") + (span ? " · " + span : "") + ' · <span class="' + (c.active ? "good" : "") + '">' + esc(c.status) + "</span>", '<div class="row"><button class="btn" data-excel="JAM-FIN-001">Statement (SOA)</button><button class="btn primary" data-excel="JAM-FIN-001">Open in Excel</button></div>') + sourceNote();
+    h += '<div class="kpis">' + kpi("Monthly rate", c.rate ? "SAR " + sar(c.rate) : "—", unit) + kpi("Total billed", "SAR " + sar(c.billed), c.issuedCount + " invoices") + kpi("Total received", "SAR " + sar(c.received), "") +
+      kpi("Outstanding", "SAR " + sar(c.out), c.out > 0 ? (c.oldest ? "Oldest unpaid " + fmt(c.oldest) : "Follow up") : "Fully collected", c.out > 0 ? "bad" : "good") + kpi("Next billing", fmt(c.next), c.next ? daysTo(c.next) + " days" : c.active ? "" : "Account " + c.status.toLowerCase(), c.next ? "warn" : "") + "</div>";
+    h += '<section class="card full"><div class="card-h"><h2>Account history</h2><small>' + issued.length + " issued" + (upcoming.length ? " · next " + upcoming.length : "") + '</small></div><div class="scroll"><table><thead><tr><th>#</th><th>PERIOD</th><th>INVOICE</th><th class="num">DEBIT</th><th class="num">CREDIT</th><th class="num">BALANCE</th><th>STATUS</th></tr></thead><tbody>';
     issued.concat(upcoming).forEach(function (x) {
       var st = String(x.payStatus || x.invStatus), cls = /^paid/i.test(st) ? "good" : /unpaid|overdue/i.test(st) ? "bad" : /due/i.test(st) ? "warn" : "";
-      h += "<tr><td>" + esc(x.no) + "</td><td>" + (x.start ? fmt(x.start) + " → " + fmt(x.end) : "—") + '</td><td class="strong">' + esc(x.inv || "—") + '</td><td class="num mono">' + (x.debit ? sar(x.debit) : "—") + '</td><td class="num mono">' + (x.credit ? sar(x.credit) : "—") + '</td><td class="num mono ' + (x.bal > 0 ? "bad" : "") + '">' + (x.debit ? sar(x.bal) : "—") + '</td><td class="strong ' + cls + '">' + esc(st) + "</td></tr>";
+      var per = x.period || (x.start ? fmt(x.start) + " → " + fmt(x.end) : "—");
+      h += "<tr><td>" + esc(x.no) + "</td><td>" + esc(per) + '</td><td class="strong">' + esc(x.inv || "—") + '</td><td class="num mono">' + (x.debit ? sar(x.debit) : "—") + '</td><td class="num mono">' + (x.credit ? sar(x.credit) : "—") + '</td><td class="num mono ' + (x.bal > 0 ? "bad" : "") + '">' + (x.debit ? sar(x.bal) : "—") + '</td><td class="strong ' + cls + '">' + esc(st) + "</td></tr>";
     });
-    if (!cyc.length) h += '<tr><td colspan="7">History appears after Microsoft sign-in.</td></tr>';
+    if (!cyc.length) h += '<tr><td colspan="7">' + (c.daily ? "Daily-service invoices are listed in the Daily Invoice register." : "No billing cycles found.") + "</td></tr>";
     return h + "</tbody></table></div></section>";
   }
   function jamaKpis() {
@@ -361,7 +379,7 @@
     else if (r.v === "registry") { html = vRegistry(); c.push(["Record Registry", "#/registry"]); }
     else if (r.v === "k") { html = vKingdom(k); if (k) c.push([k.name, "#/k/" + k.id]); }
     else if (r.v === "u") { var u = findU(k, r.b); html = vUnit(k, u); if (k) c.push([k.name, "#/k/" + k.id]); if (u) c.push([u.name, "#/u/" + k.id + "/" + u.id]); }
-    else if (r.v === "client") { html = vClient(r.a, r.b); var cb = allClients().filter(function (x) { return x.unit === r.a && x.key === r.b; })[0]; c.push(["Business Operations", "#/k/biz"], ["Jama Star Rent a Car", "#/u/biz/jama"]); if (cb) c.push([cb.customer, location.hash]); }
+    else if (r.v === "client") { html = vClient(r.a, r.b); var cb = findClient(r.a, r.b); c.push(["Business Operations", "#/k/biz"], ["Jama Star Rent a Car", "#/u/biz/jama"]); if (cb) c.push([cb.customer, location.hash]); }
     else if (r.v === "record") { var rec = findR(r.a); html = vRecord(rec); if (rec) { c.push([rec.k.name, "#/k/" + rec.k.id], [rec.u.name, "#/u/" + rec.k.id + "/" + rec.u.id], [rec.name, "#/record/" + rec.id]); } }
     else html = vHome();
     crumbs(c);
@@ -404,7 +422,7 @@
     KINGDOMS.forEach(function (k) { c.push({ l: k.name, g: "Kingdom", go: "#/k/" + k.id }); k.units.forEach(function (u) { c.push({ l: u.name, g: k.name, go: "#/u/" + k.id + "/" + u.id }); }); });
     RECORDS.forEach(function (r) { c.push({ l: "Open " + r.name, s: r.id, g: "Record · " + r.id, go: "#/record/" + r.id }); });
     if (S.data) {
-      allClients().forEach(function (x) { c.push({ l: "Account · " + x.customer, s: x.key + " " + x.name + " client account", g: "Jama · " + x.unit, go: "#/client/" + x.unit + "/" + encodeURIComponent(x.key) }); });
+      allClients().forEach(function (x) { c.push({ l: "Account · " + x.customer, s: x.key + " " + x.name + " client account", g: "Jama · " + x.unit, go: "#/client/" + x.unit + "/" + encodeURIComponent(x.id) }); });
       S.data.kaec.forEach(function (v) { c.push({ l: "Issue invoice · " + v.name, s: v.key + " " + v.customer, g: v.customer, fn: function () { location.hash = "#/inbox"; openExcel("JAM-FIN-001", "Invoice " + v.name); } }); });
       S.data.wwc.forEach(function (a) { c.push({ l: "SOA reminder · " + a.customer, s: a.key + " " + a.plate + " soa statement", g: "Jama · WWC", fn: function () { openExcel("JAM-FIN-001", "SOA " + a.customer); } }); });
     }
