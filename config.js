@@ -9,7 +9,7 @@ window.ATLAS_CONFIG = {
   records: {
     jamaClientAccounts: { names: ["Jama Client Accounts.xlsx"] },
     masAccounts: { path: "Jama Star/Documentary/Accounts/MAS Accounts/MAS Accounts.xlsx", names: ["MAS Accounts.xlsx", "MAS Accounts v0.4 (script-ready).xlsx"] },
-    monthlyFinance: { path: "Jama Star/Documentary/Accounts/Monthly Report/Monthly Finance Report 2026.xlsx", names: ["Monthly Finance Report 2026.xlsx", "Monthly Finance Report v0.1 (script-ready).xlsx"] }
+    monthlyFinance: { path: "AashiFX/ATLAS Hub/Jama Star/Monthly Finance Report/Monthly Finance Report 2026.xlsx", names: ["Monthly Finance Report 2026.xlsx", "Monthly Finance Report v0.1 (script-ready).xlsx"] }
   },
   hubSheet: "Hub Status",
   hubRange: "A4:C40"
