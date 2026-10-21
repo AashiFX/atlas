@@ -4,7 +4,7 @@
    This repository contains no business data. */
 (function () {
   "use strict";
-  var VERSION = "1.3.3";
+  var VERSION = "1.3.4";
   var CFG = window.ATLAS_CONFIG || {};
 
   // ---------------------------------------------------------------- helpers

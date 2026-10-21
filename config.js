@@ -7,7 +7,7 @@ window.ATLAS_CONFIG = {
   // How ATLAS finds each workbook in OneDrive: "path" is tried first (when the file sits in its final folder),
   // then each name in "names" is searched and the most recently saved exact match is used.
   records: {
-    jamaClientAccounts: { names: ["Jama Client Accounts.xlsx"] },
+    jamaClientAccounts: { path: "AashiFX/ATLAS Hub/Jama Star/Client Accounts/Jama Client Accounts.xlsx", names: ["Jama Client Accounts.xlsx"] },
     masAccounts: { path: "AashiFX/ATLAS Hub/MAS/MAS Accounts/MAS Accounts.xlsx", names: ["MAS Accounts.xlsx", "MAS Accounts v0.4 (script-ready).xlsx"] },
     monthlyFinance: { path: "AashiFX/ATLAS Hub/Jama Star/Monthly Finance Report/Monthly Finance Report 2026.xlsx", names: ["Monthly Finance Report 2026.xlsx", "Monthly Finance Report v0.1 (script-ready).xlsx"] }
   },
