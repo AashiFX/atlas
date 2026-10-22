@@ -4,7 +4,7 @@
    This repository contains no business data. */
 (function () {
   "use strict";
-  var VERSION = "1.3.4";
+  var VERSION = "1.3.5";
   var CFG = window.ATLAS_CONFIG || {};
 
   // ---------------------------------------------------------------- helpers
@@ -52,7 +52,7 @@
     { id: "biz", name: "Business Operations", icon: I.biz, about: "Jama Star · MAS Mobility · Prestige Rental — operations, billing, accounts.", unitLabel: "Business units", units: [
       { id: "jama", name: "Jama Star Rent a Car", about: "Monthly & daily rentals · KAEC and WWC", records: [
         R("JAM-FIN-001", "XLS", "Jama Client Accounts", "Invoices, payments, SOA · KAEC + WWC", "TO CONNECT", "jamaClientAccounts"),
-        R("JAM-FIN-002", "XLS", "Jama VAT workbook", "Quarterly VAT IN / OUT", "TO CONNECT"),
+        R("JAM-FIN-002", "XLS", "Jama Star Expense & VAT Register", "Expenses · VAT REGISTER · quarterly VAT return", "TO CONNECT", "vatHub"),
         R("JAM-FIN-003", "XLS", "ADIF payment allocation", "Monthly allocation records", "TO CONNECT"),
         R("JAM-FLT-001", "XLS", "Vehicle Maintenance Record", "Fleet service history", "TO CONNECT"),
         R("JAM-FIN-004", "XLS", "Monthly Finance Report", "Management accounts · monthly DUE / EXCESS", "TO CONNECT", "monthlyFinance")] },
@@ -219,13 +219,14 @@
     var now = new Date();
     return {
       masAccounts: { status: "live", sample: true, readAt: now, file: { name: "MAS Accounts (sample)" }, keys: { main_statement_balance: { v: 12345 }, main_statement_open_docs: { v: 3 }, health_status: { v: "PASS" }, last_action: { v: "Sample action" }, currency: { v: "SAR" } } },
+      vatHub: { status: "live", sample: true, readAt: now, file: { name: "Expense & VAT (sample)" }, keys: { return_quarter: { v: "2026-Q3" }, return_status: { v: "OPEN" }, return_result: { v: "PAYABLE 1,000.00" }, return_due_date: { v: 46326 }, return_lines_not_selected: { v: 0 }, health_status: { v: "PASS" }, last_action: { v: "Sample" }, currency: { v: "SAR" } } },
       monthlyFinance: { status: "live", sample: true, readAt: now, file: { name: "Monthly Finance Report (sample)" }, keys: { current_month: { v: "2026-10" }, month_result: { v: "DUE 1,000.00" }, basis: { v: "BANK ONLY - sample" }, health_status: { v: "WARNINGS" }, last_action: { v: "Sample action" }, currency: { v: "SAR" } } }
     };
   }
   function load() {
     S.error = null; S.errors = {};
     if (!CFG.msClientId) { // developer preview only — never used once sign-in is configured
-      S.mode = "sample"; S.live = false; S.data = model(sample()); S.hubs = sampleHubs(); setStatus("jamaClientAccounts", "LIVE"); setStatus("masAccounts", "LIVE"); setStatus("monthlyFinance", "LIVE");
+      S.mode = "sample"; S.live = false; S.data = model(sample()); S.hubs = sampleHubs(); setStatus("jamaClientAccounts", "LIVE"); setStatus("masAccounts", "LIVE"); setStatus("monthlyFinance", "LIVE"); setStatus("vatHub", "LIVE");
       render(); return Promise.resolve();
     }
     return msReady().then(function () {
@@ -234,7 +235,7 @@
         S.mode = "live"; S.live = true;
         var jobs = [readJamaLive(tk).then(function (raw) { S.data = model(raw); setStatus("jamaClientAccounts", "LIVE"); })
           .catch(function (e) { S.errors.jamaClientAccounts = e.message || String(e); S.data = model({}); setStatus("jamaClientAccounts", "NOT CONNECTED"); })];
-        ["masAccounts", "monthlyFinance"].forEach(function (k) {
+        ["masAccounts", "monthlyFinance", "vatHub"].forEach(function (k) {
           jobs.push(readHub(k, tk).then(function (h) { S.hubs[k] = h; setStatus(k, "LIVE"); })
             .catch(function (e) { S.hubs[k] = { status: "not connected", reason: e.message || String(e) }; setStatus(k, "NOT CONNECTED"); }));
         });
@@ -295,7 +296,7 @@
   }
   // ---------------------------------------------------------------- Hub Status cards
   function hv(h, k) { return h && h.keys && h.keys[k] ? h.keys[k].v : null; }
-  var DATE_KEY = /date|_from$|^current_month$|^as_of$/i, PLAIN_KEY = /docs|count|gaps|months|entries|version|posted|void|invoice/i;
+  var DATE_KEY = /date|_from$|^current_month$|^as_of$/i, PLAIN_KEY = /docs|count|gaps|months|entries|version|posted|void|invoice|lines/i;
   function showVal(k, v) {
     if (typeof v === "number" && DATE_KEY.test(k) && v > 20000 && v < 80000) { var d = toDate(v); return /month$/i.test(k) ? MON[d.getUTCMonth()] + " " + d.getUTCFullYear() : fmt(d); }
     if (typeof v === "number") return PLAIN_KEY.test(k) ? String(v) : sar(v);
@@ -323,6 +324,10 @@
     }) + hubCard("monthlyFinance", "Jama · Monthly result", "JAM-FIN-004", function (h) {
       var r = String(hv(h, "month_result") || "—");
       return '<span class="kpi" style="padding:0;background:none"><span>' + esc(showVal("current_month", hv(h, "current_month")) || "") + '</span><b class="mono ' + (/^DUE/i.test(r) ? "bad" : /^EXCESS/i.test(r) ? "good" : "") + '">' + esc(r) + '</b><small class="warn">Basis: ' + esc(hv(h, "basis") || "unknown") + "</small></span>";
+    });
+    cards += hubCard("vatHub", "Jama · VAT return", "JAM-FIN-002", function (h) {
+      var r = String(hv(h, "return_result") || "—"); var n = hv(h, "return_lines_not_selected");
+      return '<span class="kpi" style="padding:0;background:none"><span>' + esc(String(hv(h, "return_quarter") || "") + " · " + String(hv(h, "return_status") || "")) + '</span><b class="mono ' + (/^PAYABLE/i.test(r) ? "bad" : /^CREDIT/i.test(r) ? "good" : "") + '">' + esc(r) + '</b><small>' + esc("Due " + (showVal("return_due_date", hv(h, "return_due_date")) || "—") + (n ? " · " + n + " line(s) not ticked" : " · all lines ticked")) + "</small></span>";
     });
     var j = S.hubs.jamaClientAccounts;
     if (j && j.status === "live") cards += hubCard("jamaClientAccounts", "Jama Client Accounts", "JAM-FIN-001", function () { return ""; });
